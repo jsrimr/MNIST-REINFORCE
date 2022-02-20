@@ -51,7 +51,7 @@ class Policy(nn.Module):
         R = 0
         self.optimizer.zero_grad()
 
-        loss = torch.empty([BATCH_SIZE , 1])
+        loss = torch.empty([self.data[0][1].size(0) , 1])
         while self.data:
             (r, prob) = self.data.popleft()
             # R = r + gamma * R
@@ -93,43 +93,69 @@ class MnistEnv:
 
     def step(self, action):
         reward = torch.where(self.y == action, 1, 0)
-        next_state, self.y = next(self.dataloader, [None, None])
-        self.state = next_state
+        self.state, self.y = next(self.dataloader, [None, None])
 
-        done = True if next_state == None else False
-        # self.score += reward
-
-        return (next_state, reward, done, None)
+        done = True if self.state == None else False
+        return (self.state, reward, done, None)
 
 
 def main():
-    env = MnistEnv()
+    env = MnistEnv(mode=args.mode)
     pi = Policy()
-    score = 0.0
-    print_interval = 20
-
-    # for n_epi in range(10000):
-    for step in range(10000):
     
+    print_interval = 20
+    max_score = 0
+    step = 0
+    # for n_epi in range(10000):
+    if args.mode == 'train':
+        
+        # for step in range(10000):
+        for epoch in range(10):
+            s = env.reset()
+            done = False
+            score = 0.0
+            while not done:
+                prob = pi(s)
+                m = Categorical(prob)
+                a = m.sample()
+                s_prime, r, done, info = env.step(a)
+                pi.put_data((r, prob.gather(1,a.unsqueeze(1))))
+                s = s_prime
+                score += (r.float().mean())
+
+                pi.train_net()
+                step += 1
+
+                if step % print_interval == 0 and step != 0:
+                    print(f"# of step :{step}, mini-batch acc : {r.float().mean()}")
+
+            if score > max_score:
+                max_score = score
+                torch.save(pi.state_dict(), "checkpoint.pth")
+    
+    else:
+        checkpoint = torch.load('checkpoint.pth')
+        pi.load_state_dict(checkpoint)
+
         s = env.reset()
         done = False
+        score = []
+        while not done:
+            prob = pi(s)
+            m = Categorical(prob)
+            a = m.sample()
+            s_prime, r, done, info = env.step(a)
+            s = s_prime
+            score.append(r.float().mean())
 
-        prob = pi(s)
-        m = Categorical(prob)
-        a = m.sample()
-        s_prime, r, done, info = env.step(a)
-        pi.put_data((r, prob.gather(1,a.unsqueeze(1))))
-        s = s_prime
-        score += (r.float().mean())
+        print(f"test_score : {sum(score) / len(score)}")
+    # env.close()
 
-        pi.train_net()
-
-        if step % print_interval == 0 and step != 0:
-            print("# of step :{}, avg score : {}".format(
-                step, score/print_interval))
-            score = 0.0
-    env.close()
-
-
+import argparse
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Process some integers.')
+    parser.add_argument('--mode', type=str, default='train',
+                        help='train or test')
+    args = parser.parse_args()
+
     main()
